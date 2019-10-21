@@ -6,11 +6,14 @@ async function ping (pool) {
 
   try {
     conn = await pool.getConnection();
-    return conn.ping();
+    await conn.ping();
+  } catch (err) {
+    await conn.release();
+    throw err;
   } finally {
     if (conn) {
       try {
-        await conn.close();
+        await conn.release();
       } catch (err) {
         console.log(err);
       }
@@ -18,13 +21,18 @@ async function ping (pool) {
   }
 }
 
-async function checkDatabase () {
-  const pool = oracledb.getPool();
+async function checkDatabase (counterFn) {
+  const id = counterFn();
+
+  let pool
   try {
+    pool = oracledb.getPool();
     await ping(pool);
+    console.log(`[healthCheck ${id}] All good!`);
+    // console.log(pool._logStats());
   } catch (err) {
-    console.log('[healthCheck] Error catched');
-    console.log(pool._logStats());
+    console.log(`[healthCheck ${id}] Error catched`);
+    // if (pool) console.log(pool._logStats());
   }
 }
 
@@ -37,13 +45,22 @@ const DB_CHECK_INTERVAL = 10 * 1000;
     ORACLE_CONNECT_STRING
   } = process.env;
 
-  await oracledb.createPool({
-    user: ORACLE_USER,
-    password: ORACLE_PASSWORD,
-    connectString: ORACLE_CONNECT_STRING,
-    _enableStats: true
-  });
+  let counter = 0
+  const increase = () => ++counter;
+
+  try {
+    await oracledb.createPool({
+      user: ORACLE_USER,
+      password: ORACLE_PASSWORD,
+      connectString: ORACLE_CONNECT_STRING,
+      poolMin: 1,
+      _enableStats: true
+    });
+  } catch (err) {
+    console.log(err);
+    process.exit(1);
+  }
   console.log('[Database] Connection established');
 
-  setInterval(checkDatabase, DB_CHECK_INTERVAL);
+  setInterval(() => checkDatabase(increase), DB_CHECK_INTERVAL);
 })();
